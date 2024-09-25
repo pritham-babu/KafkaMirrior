@@ -10,4 +10,7 @@ public interface KafkaService {
   void kafkaResetOffset(String payload);
 
   List<Map> kafkaOffsetsAndPartitionFetcher(String payload);
+
+  void clearKafkaLag(String payload);
+
 }

@@ -64,4 +64,17 @@ public class KafkaMirriorController {
     {
         kafkaService.kafkaResetOffset(payload);
     }
+
+    @PostMapping(value = "clearKafkaLag",
+            produces = APPLICATION_JSON_VALUE)
+    @ApiOperation(value = "clearKafkaLag", produces = "application/json",
+            consumes = "application/json")
+    @ApiResponses(value = {@ApiResponse(code = 200, message = "The Post call is Successful"),
+            @ApiResponse(code = 500, message = "The Post call Failed"),
+            @ApiResponse(code = 404, message = "The API could not be found"),
+            @ApiResponse(code = 400, message = "Invalid input")})
+    public void clearKafkaLag(@RequestBody String payload)
+    {
+        kafkaService.clearKafkaLag(payload);
+    }
 }

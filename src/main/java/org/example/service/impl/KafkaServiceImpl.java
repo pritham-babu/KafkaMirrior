@@ -295,8 +295,8 @@ public class KafkaServiceImpl implements KafkaService {
     Properties props = new Properties();
     props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
-    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
     props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");  // Start consuming from the earliest available offset
 
     // Create Kafka consumer
@@ -312,5 +312,53 @@ public class KafkaServiceImpl implements KafkaService {
 
     // Close the consumer after the group has been created
     consumer.close();
+  }
+
+  public void clearKafkaLag(String payload)
+  {
+    try
+    {
+      List<KafkaMirrorDTO> kafkaMirrorDTOList = objectMapper.readValue(payload, new TypeReference<List<KafkaMirrorDTO>>(){});
+
+      if(CollectionUtils.isNotEmpty(kafkaMirrorDTOList)) {
+        for (KafkaMirrorDTO kafkaMirrorDTO : kafkaMirrorDTOList) {
+          Properties props = new Properties();
+          props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaMirrorDTO.getSourceBootstrapServers());
+          props.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaMirrorDTO.getConsumerGroupId());
+          props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+          props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+          props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+          // Step 2: Create Kafka consumer
+          KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+
+          // Define the specific partition you want to clear the lag from
+          TopicPartition partition = new TopicPartition(kafkaMirrorDTO.getSourceTopic(), kafkaMirrorDTO.getSourcePartition());
+
+          // Step 3: Assign the consumer to the partition
+          consumer.assign(Collections.singletonList(partition));
+
+          // Step 4: Fetch the latest offset (end offset) of the partition
+          consumer.seekToEnd(Collections.singletonList(partition));
+          long endOffset = consumer.position(partition);
+          System.out.println("End offset for partition " + kafkaMirrorDTO.getSourcePartition() + ": " + endOffset);
+
+          // Step 5: Commit the latest offset for this partition to clear the lag
+          Map<TopicPartition, OffsetAndMetadata> offsetsToCommit = new HashMap<>();
+          offsetsToCommit.put(partition, new OffsetAndMetadata(endOffset));
+
+          // Commit the offset to mark all messages as read
+          consumer.commitSync(offsetsToCommit);
+          System.out.println("Lag cleared for partition " + kafkaMirrorDTO.getSourcePartition() + ". Offset committed: " + endOffset);
+
+          // Step 6: Close the consumer
+          consumer.close();
+        }
+      }
+    }
+    catch (Exception e)
+    {
+      log.error("Error", e);
+    }
   }
 }
