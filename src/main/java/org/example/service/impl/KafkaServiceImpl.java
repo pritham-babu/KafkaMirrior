@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -17,6 +18,8 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.ConsumerGroupState;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -78,6 +81,8 @@ public class KafkaServiceImpl implements KafkaService {
           producerProperties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, destinationBootstrapServers);
           producerProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
           producerProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
+          createConsumerGroupInDestinationServerIfnotPresent(consumerProperties, consumerGroupId, kafkaMirrorDTO);
 
           // Create Kafka Consumer for the source cluster
           KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProperties);
@@ -158,6 +163,26 @@ public class KafkaServiceImpl implements KafkaService {
 
   }
 
+  private void createConsumerGroupInDestinationServerIfnotPresent(Properties producerProperties, String consumerGroupId, KafkaMirrorDTO kafkaMirrorDTO) {
+
+    try
+    {
+      AdminClient adminClient = AdminClient.create(producerProperties);
+      boolean groupExists = doesConsumerGroupExist(adminClient, consumerGroupId);
+      if (!groupExists) {
+        System.out.println("Consumer group does not exist. Creating a new consumer group...");
+
+        // Step 2: Create a consumer group by starting a consumer
+        createConsumerGroup(kafkaMirrorDTO.getDestinationBootstrapServers(), consumerGroupId,
+                kafkaMirrorDTO.getDestinationTopic(), kafkaMirrorDTO.getDestinationPartition());
+      }
+    }
+    catch (Exception e)
+    {
+      log.error("Unable to check the group id ", e);
+    }
+  }
+
   public List<Map> kafkaOffsetsAndPartitionFetcher(String payload) {
     List<Map> topicDetails = new ArrayList<>();
 
@@ -206,5 +231,86 @@ public class KafkaServiceImpl implements KafkaService {
       log.error("Unable to fetch details", e);
     }
     return topicDetails;
+  }
+
+  public void kafkaResetOffset(String payload)
+  {
+    try
+    {
+      List<KafkaMirrorDTO> kafkaMirrorDTOList = objectMapper.readValue(payload, new TypeReference<List<KafkaMirrorDTO>>(){});
+
+      if(CollectionUtils.isNotEmpty(kafkaMirrorDTOList)) {
+        for (KafkaMirrorDTO kafkaMirrorDTO : kafkaMirrorDTOList) {
+          Properties props = new Properties();
+          props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaMirrorDTO.getSourceBootstrapServers());
+          props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+          props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+          props.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaMirrorDTO.getConsumerGroupId());
+          props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none");
+          KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+          try
+          {
+            TopicPartition topicPartition = new TopicPartition(kafkaMirrorDTO.getSourceTopic(), kafkaMirrorDTO.getSourcePartition());
+            consumer.assign(Collections.singletonList(topicPartition));
+            consumer.seek(topicPartition, kafkaMirrorDTO.getResetOffset());
+          }
+          catch (Exception e)
+          {
+            log.error("Reset error", e);
+          }
+          finally {
+            consumer.close();
+          }
+        }
+      }
+    }
+    catch (Exception e)
+    {
+      log.error("Unable to reset offset", e);
+    }
+  }
+
+
+  private static boolean doesConsumerGroupExist(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
+    try {
+      boolean isPresent = false;
+      KafkaFuture<ConsumerGroupDescription> future = adminClient.describeConsumerGroups(Collections.singletonList(groupId))
+              .describedGroups().get(groupId);
+      // If the group exists, no exception will be thrown, and we return true
+      ConsumerGroupDescription groupDescription = future.get();
+      if(groupDescription!=null && ConsumerGroupState.DEAD.equals(groupDescription.state()))
+      {
+        isPresent = true;
+      }
+      return isPresent;
+    } catch (Exception e) {
+      // If the group doesn't exist, an exception may be thrown
+      return false;
+    }
+  }
+
+  // Method to create a consumer group by starting a consumer
+  private static void createConsumerGroup(String bootstrapServers, String groupId, String topic, int partition) {
+    // Consumer configuration properties
+    Properties props = new Properties();
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");  // Start consuming from the earliest available offset
+
+    // Create Kafka consumer
+    KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+    TopicPartition topicPartition = new TopicPartition(topic, partition);
+
+    // Assign the consumer to a specific topic partition
+    consumer.assign(Collections.singletonList(topicPartition));
+
+    // Poll the topic to initiate the consumer group creation
+    consumer.poll(Duration.ofMillis(1000));
+    System.out.println("Consumer group created and joined topic: " + topic);
+
+    // Close the consumer after the group has been created
+    consumer.close();
   }
 }

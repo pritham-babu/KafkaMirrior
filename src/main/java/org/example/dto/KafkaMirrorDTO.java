@@ -21,4 +21,5 @@ public class KafkaMirrorDTO implements Serializable {
     private int sourcePartition;
     private long sourceOffset;
     private int destinationPartition;
+    private long resetOffset;
 }
