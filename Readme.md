@@ -58,6 +58,8 @@ Request Body:
 
 This request will return a list of topics, consumer groups, partitions, and offset details. Review the output to identify the topics you wish to mirror.
 
+# Dont post same messages by multiple people. 
+
 - ## Copy Kafka Messages with Offsets
 
 Once you have the necessary information, you can use the following API to copy messages:
@@ -96,5 +98,4 @@ Request Body:
 
 - Copy Operation: The copy operation will proceed only if the destination partition is specified. If it is absent, the operation will fail.
 - Message Handling: This API will copy all messages starting from the last offset for the specified partition and will also commit the offsets in the old cluster.
-
 
