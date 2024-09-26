@@ -58,7 +58,7 @@ Request Body:
 
 This request will return a list of topics, consumer groups, partitions, and offset details. Review the output to identify the topics you wish to mirror.
 
-# Dont post same messages by mutiple people. 
+# Dont post same messages by multiple people. 
 
 - ## Copy Kafka Messages with Offsets
 
