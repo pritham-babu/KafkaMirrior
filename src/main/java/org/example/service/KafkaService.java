@@ -13,4 +13,10 @@ public interface KafkaService {
 
   void clearKafkaLag(String payload);
 
+  void lagChecker(String payload);
+
+  void compare2BootStrap(String sourceBootstrap, String destinationBootstrap);
+
+  void getStatusOfConsumerGroup(String sourceBootstrap);
+
 }

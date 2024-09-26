@@ -9,7 +9,13 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
+import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -25,6 +31,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.example.dto.KafkaMirrorDTO;
 import org.example.dto.KafkaOffsetAdjust;
+import org.example.dto.TopicData;
 import org.example.service.KafkaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -33,9 +40,21 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.*;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.admin.ConsumerGroupListing;
+import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
+
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 
 
@@ -360,5 +379,245 @@ public class KafkaServiceImpl implements KafkaService {
     {
       log.error("Error", e);
     }
+  }
+
+  public void lagChecker(String payload)
+  {
+    try {
+      KafkaOffsetAdjust kafkaOffsetAdjust = objectMapper.readValue(payload, KafkaOffsetAdjust.class);
+
+      calculateLagForAllTopics(kafkaOffsetAdjust.getBootstrapServers());
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+
+
+  public static AdminClient createAdminClient(String bootstrapServers) {
+    Properties properties = new Properties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    return AdminClient.create(properties);
+  }
+
+  // Method to get the latest offsets for all topics
+  public static Map<TopicPartition, Long> getLatestOffsets(AdminClient adminClient, Set<String> topics) throws ExecutionException, InterruptedException {
+    Map<TopicPartition, OffsetSpec> requestLatestOffsets = new HashMap<>();
+
+    for (String topic : topics) {
+      adminClient.describeTopics(Collections.singleton(topic)).all().get().forEach((topicName, topicDescription) -> {
+        topicDescription.partitions().forEach(partition -> {
+          TopicPartition topicPartition = new TopicPartition(topic, partition.partition());
+          requestLatestOffsets.put(topicPartition, OffsetSpec.latest());
+        });
+      });
+    }
+
+    Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> endOffsets = adminClient.listOffsets(requestLatestOffsets).all().get();
+
+    Map<TopicPartition, Long> latestOffsets = new HashMap<>();
+    for (Map.Entry<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> entry : endOffsets.entrySet()) {
+      latestOffsets.put(entry.getKey(), entry.getValue().offset());
+    }
+    return latestOffsets;
+  }
+
+  // Method to get all active consumer groups
+  public static Set<String> getConsumerGroups(AdminClient adminClient) throws ExecutionException, InterruptedException {
+    Set<String> consumerGroups = new HashSet<>();
+    adminClient.listConsumerGroups().all().get().forEach(consumerGroupListing -> consumerGroups.add(consumerGroupListing.groupId()));
+    return consumerGroups;
+  }
+
+  // Method to get consumer group offsets
+  public static Map<TopicPartition, Long> getConsumerGroupOffsets(AdminClient adminClient, String consumerGroupId) throws ExecutionException, InterruptedException {
+    ListConsumerGroupOffsetsResult offsetsResult = adminClient.listConsumerGroupOffsets(consumerGroupId);
+    return offsetsResult.partitionsToOffsetAndMetadata().get().entrySet().stream()
+            .collect(HashMap::new, (m, e) -> m.put(e.getKey(), e.getValue().offset()), HashMap::putAll);
+  }
+
+  // Method to get all topics in the Kafka cluster
+  public static Set<String> getAllTopics(AdminClient adminClient) throws ExecutionException, InterruptedException {
+    Set<String> topics = new HashSet<>();
+    adminClient.listTopics().listings().get().forEach(topicListing -> topics.add(topicListing.name()));
+    return topics;
+  }
+
+  // Method to calculate and print the consumer lag for all topics across all consumer groups
+  public static void calculateLagForAllTopics(String bootstrapServers) throws ExecutionException, InterruptedException {
+    try (AdminClient adminClient = createAdminClient(bootstrapServers)) {
+
+      // Fetch all topics
+      Set<String> allTopics = getAllTopics(adminClient);
+      System.out.println("Topics in Kafka: " + allTopics);
+
+      // Fetch latest offsets for all topics
+      Map<TopicPartition, Long> latestOffsets = getLatestOffsets(adminClient, allTopics);
+
+      // Fetch all active consumer groups
+      Set<String> consumerGroups = getConsumerGroups(adminClient);
+
+      // For each consumer group, get the current offsets and calculate the lag
+      for (String consumerGroupId : consumerGroups) {
+
+          // Fetch current consumer group offsets
+          Map<TopicPartition, Long> consumerOffsets = getConsumerGroupOffsets(adminClient, consumerGroupId);
+
+          // Calculate lag for each partition
+          for (Map.Entry<TopicPartition, Long> entry : latestOffsets.entrySet()) {
+            TopicPartition partition = entry.getKey();
+            long latestOffset = entry.getValue();
+            long consumerOffset = consumerOffsets.getOrDefault(partition, 0L);
+            if(consumerOffset > 0)
+            {
+              long lag = latestOffset - consumerOffset;
+
+              if(lag > 0)
+              {
+                System.out.println("Consumer Lag for group: " + consumerGroupId);
+
+                System.out.println("Topic: " + partition.topic() +
+                        ", Partition: " + partition.partition() +
+                        ", Latest Offset: " + latestOffset +
+                        ", Consumer Offset: " + consumerOffset +
+                        ", Lag: " + lag);
+              }
+            }
+        }
+      }
+    }
+  }
+
+  public void compare2BootStrap(String sourceBootstrap, String destinationBootstrap) {
+    // Bootstrap servers for two Kafka clusters
+    try
+    {
+      // Fetch partition and consumer group data for both clusters
+      System.out.println("Fetching data from source cluster...");
+      Map<String, TopicData> sourceClusterData = fetchKafkaClusterData(sourceBootstrap);
+
+      System.out.println("\nFetching data from destination cluster...");
+      Map<String, TopicData> destinationClusterData = fetchKafkaClusterData(destinationBootstrap);
+
+      // Compare results between two clusters
+      System.out.println("\nComparison between Source and Destination Clusters:");
+      compareClusters(sourceClusterData, destinationClusterData);
+    }
+    catch (Exception e)
+    {
+      log.error("unable to compare");
+    }
+
+  }
+
+  // Fetch the topics, partition counts, and consumer groups for a Kafka cluster
+  private static Map<String, TopicData> fetchKafkaClusterData(String bootstrapServers) throws ExecutionException, InterruptedException {
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    AdminClient adminClient = AdminClient.create(adminProps);
+
+    // Step 1: List all topics
+    Set<String> topics = adminClient.listTopics().names().get();
+
+    // Step 2: Fetch partition counts for each topic
+    DescribeTopicsResult describeTopicsResult = adminClient.describeTopics(topics);
+    Map<String, TopicDescription> topicDescriptions = describeTopicsResult.all().get();
+
+    // Step 3: Fetch all consumer groups
+    ListConsumerGroupsResult consumerGroupsResult = adminClient.listConsumerGroups();
+    Collection<ConsumerGroupListing> consumerGroupListings = consumerGroupsResult.all().get();
+
+    // Store the topic data (partition count and consumer group count)
+    Map<String, TopicData> topicDataMap = new HashMap<>();
+
+    // Initialize topic data with partition counts
+    for (Map.Entry<String, TopicDescription> entry : topicDescriptions.entrySet()) {
+      String topicName = entry.getKey();
+      int partitionCount = entry.getValue().partitions().size();
+      topicDataMap.put(topicName, new TopicData(partitionCount, 0));
+    }
+
+    // Map consumer groups to topics
+    for (ConsumerGroupListing consumerGroupListing : consumerGroupListings) {
+      String groupId = consumerGroupListing.groupId();
+      // For each consumer group, list its topics (for simplicity we assume groups subscribe to topics directly)
+      // Note: In real cases, you'd need to describe the consumer group to get its topics and partitions.
+      // But here we're keeping it simple with assumed 1-to-1 topic-group mapping.
+
+      // Increment the consumer group count for each topic (simple assumption)
+      for (String topic : topics) {
+        TopicData topicData = topicDataMap.get(topic);
+        if (topicData != null) {
+          topicData.incrementConsumerGroupCount();
+        }
+      }
+    }
+
+    adminClient.close();
+    return topicDataMap;
+  }
+
+  // Compare the source and destination cluster topic data
+  private static void compareClusters(Map<String, TopicData> sourceData, Map<String, TopicData> destinationData) {
+    for (String topic : sourceData.keySet()) {
+      TopicData sourceTopicData = sourceData.get(topic);
+      TopicData destinationTopicData = destinationData.get(topic);
+
+      if (destinationTopicData == null) {
+        System.out.println("Topic " + topic + " exists only in the source cluster.");
+      } else {
+        if( sourceTopicData.getPartitionCount() != destinationTopicData.getPartitionCount())
+        {
+          System.out.println("Topic: " + topic);
+          System.out.println("  Source cluster - Partitions: " + sourceTopicData.getPartitionCount());
+          System.out.println("  Destination cluster - Partitions: " + destinationTopicData.getPartitionCount());
+        }
+      }
+    }
+
+    // Check if there are topics in the destination cluster that don't exist in the source
+    for (String topic : destinationData.keySet()) {
+      if (!sourceData.containsKey(topic)) {
+        System.out.println("Topic " + topic + " exists only in the destination cluster.");
+      }
+    }
+  }
+
+  public void getStatusOfConsumerGroup(String bootstrapServers)
+  {
+    // Create AdminClient to communicate with the Kafka cluster
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    AdminClient adminClient = AdminClient.create(adminProps);
+
+    try {
+      //List all consumer groups
+      Collection<ConsumerGroupListing> consumerGroups = adminClient.listConsumerGroups().valid().get();
+      System.out.printf("%-30s %-15s %-10s %-20s%n", "Consumer Group ID", "Status", "Members");
+
+      // Describe each consumer group to get their status
+      for (ConsumerGroupListing groupListing : consumerGroups) {
+        String groupId = groupListing.groupId();
+        ConsumerGroupDescription description = getConsumerGroupDescription(adminClient, groupId);
+        System.out.printf("%-30s %-15s %-10d %-20d%n",
+                  groupId,
+                  description.state(),
+                  description.members().size());
+
+          /*System.out.println("Consumer Group ID: " + groupId);
+          System.out.println("  Status: " + description.state());
+          System.out.println("  Members: " + description.members().size());
+          //System.out.println("  Partition Assignments: " + description.partitions().size());
+          System.out.println();*/
+      }
+    } catch (ExecutionException | InterruptedException e) {
+      e.printStackTrace();
+    } finally {
+      // Close the AdminClient
+      adminClient.close();
+    }
+  }
+  private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
+    DescribeConsumerGroupsResult describeConsumerGroupsResult = adminClient.describeConsumerGroups(Collections.singletonList(groupId));
+    return describeConsumerGroupsResult.all().get().get(groupId);
   }
 }

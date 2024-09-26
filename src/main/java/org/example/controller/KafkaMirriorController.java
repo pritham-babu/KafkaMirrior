@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.springframework.http.HttpStatus.OK;
@@ -77,4 +78,45 @@ public class KafkaMirriorController {
     {
         kafkaService.clearKafkaLag(payload);
     }
+
+
+    @PostMapping(value = "lagChecker",
+            produces = APPLICATION_JSON_VALUE)
+    @ApiOperation(value = "lagChecker", produces = "application/json",
+            consumes = "application/json")
+    @ApiResponses(value = {@ApiResponse(code = 200, message = "The Post call is Successful"),
+            @ApiResponse(code = 500, message = "The Post call Failed"),
+            @ApiResponse(code = 404, message = "The API could not be found"),
+            @ApiResponse(code = 400, message = "Invalid input")})
+    public void lagChecker(@RequestBody String payload)
+    {
+        kafkaService.lagChecker(payload);
+    }
+
+    @PostMapping(value = "compare2BootStrap",
+            produces = APPLICATION_JSON_VALUE)
+    @ApiOperation(value = "compare2BootStrap", produces = "application/json",
+            consumes = "application/json")
+    @ApiResponses(value = {@ApiResponse(code = 200, message = "The Post call is Successful"),
+            @ApiResponse(code = 500, message = "The Post call Failed"),
+            @ApiResponse(code = 404, message = "The API could not be found"),
+            @ApiResponse(code = 400, message = "Invalid input")})
+    public void compare2BootStrap(@RequestParam String sourceBootstrap, @RequestParam String destinationBootstrap)
+    {
+        kafkaService.compare2BootStrap(sourceBootstrap, destinationBootstrap);
+    }
+
+    @PostMapping(value = "getStatusOfConsumerGroup",
+            produces = APPLICATION_JSON_VALUE)
+    @ApiOperation(value = "getStatusOfConsumerGroup", produces = "application/json",
+            consumes = "application/json")
+    @ApiResponses(value = {@ApiResponse(code = 200, message = "The Post call is Successful"),
+            @ApiResponse(code = 500, message = "The Post call Failed"),
+            @ApiResponse(code = 404, message = "The API could not be found"),
+            @ApiResponse(code = 400, message = "Invalid input")})
+    public void getStatusOfConsumerGroup(@RequestParam String sourceBootstrap)
+    {
+        kafkaService.getStatusOfConsumerGroup(sourceBootstrap);
+    }
+
 }
