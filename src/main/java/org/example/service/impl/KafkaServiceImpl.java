@@ -592,13 +592,13 @@ public class KafkaServiceImpl implements KafkaService {
     try {
       //List all consumer groups
       Collection<ConsumerGroupListing> consumerGroups = adminClient.listConsumerGroups().valid().get();
-      System.out.printf("%-30s %-15s %-10s %-20s%n", "Consumer Group ID", "Status", "Members");
+      System.out.printf("%-80s %-15s %-10s %n", "Consumer Group ID", "Status", "Members");
 
       // Describe each consumer group to get their status
       for (ConsumerGroupListing groupListing : consumerGroups) {
         String groupId = groupListing.groupId();
         ConsumerGroupDescription description = getConsumerGroupDescription(adminClient, groupId);
-        System.out.printf("%-30s %-15s %-10d %-20d%n",
+        System.out.printf("%-80s %-15s %-10d %n",
                   groupId,
                   description.state(),
                   description.members().size());
