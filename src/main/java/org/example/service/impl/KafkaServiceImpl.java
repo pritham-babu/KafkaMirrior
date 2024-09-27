@@ -9,13 +9,16 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
+import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -26,7 +29,10 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.example.dto.KafkaMirrorDTO;
@@ -56,6 +62,7 @@ import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 
 import java.util.*;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -455,6 +462,7 @@ public class KafkaServiceImpl implements KafkaService {
 
       // Fetch all active consumer groups
       Set<String> consumerGroups = getConsumerGroups(adminClient);
+      System.out.printf("%-40s %-30s %-15s %-15s %-15s %-15s\n", "Consumer Group", "Topic", "Partition", "Latest Offset", "Consumer Offset" , "Lag");
 
       // For each consumer group, get the current offsets and calculate the lag
       for (String consumerGroupId : consumerGroups) {
@@ -473,13 +481,15 @@ public class KafkaServiceImpl implements KafkaService {
 
               if(lag > 0)
               {
-                System.out.println("Consumer Lag for group: " + consumerGroupId);
+                //System.out.println("Consumer Lag for group: " + consumerGroupId);
 
-                System.out.println("Topic: " + partition.topic() +
-                        ", Partition: " + partition.partition() +
-                        ", Latest Offset: " + latestOffset +
-                        ", Consumer Offset: " + consumerOffset +
-                        ", Lag: " + lag);
+                System.out.printf("%-40s %-30s %-15d %-15d %-15d %-15d\n", consumerGroupId, partition.topic(), partition.partition(), latestOffset, consumerOffset, lag);
+
+//                System.out.println("Topic: " + partition.topic() +
+//                        ", Partition: " + partition.partition() +
+//                        ", Latest Offset: " + latestOffset +
+//                        ", Consumer Offset: " + consumerOffset +
+//                        ", Lag: " + lag);
               }
             }
         }
@@ -619,5 +629,80 @@ public class KafkaServiceImpl implements KafkaService {
   private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
     DescribeConsumerGroupsResult describeConsumerGroupsResult = adminClient.describeConsumerGroups(Collections.singletonList(groupId));
     return describeConsumerGroupsResult.all().get().get(groupId);
+  }
+
+
+  public void postMessagesTopic()
+  {
+    /*// Define source and target Kafka clusters (bootstrap servers)
+    String sourceBootstrapServers = "10.16.0.67:9092,10.16.0.92:9092,10.16.0.71:9092";  // Replace with source Kafka broker
+    String targetBootstrapServers = "10.3.0.124:9092,10.3.0.158:9092,10.3.0.200:9092";  // Replace with target Kafka broker
+    String sourceTopic = "BG_SHIPMENT_INBOUND_QA";                          // Replace with source Kafka topic
+    String targetTopic = "BG_SHIPMENT_INBOUND_LOCAL";                          // Replace with target Kafka topic
+    String consumerGroupId = "BG_SHIPMENT_INBOUND_QAMBESHP12302021-QA54";      // Replace with a unique consumer group ID
+
+    // Maximum number of messages to relay
+    int maxMessages = 5000;
+    int messageCount = 0;
+
+    // Create Kafka consumer properties for the source cluster
+    Properties consumerProperties = new Properties();
+    consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, sourceBootstrapServers);
+    consumerProperties.put(ConsumerConfig.GROUP_ID_CONFIG, consumerGroupId);
+    consumerProperties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    consumerProperties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    consumerProperties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");  // Start from the beginning if no offset is committed
+
+    // Create Kafka producer properties for the target cluster
+    Properties producerProperties = new Properties();
+    producerProperties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, targetBootstrapServers);
+    producerProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+    producerProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
+    // Create Kafka consumer and producer
+    KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProperties);
+    KafkaProducer<String, String> producer = new KafkaProducer<>(producerProperties);
+
+    // Subscribe the consumer to the source topic
+    consumer.subscribe(Collections.singletonList(sourceTopic));
+
+    try {
+      // Poll and relay messages from source to target
+      while (messageCount < maxMessages) {
+        // Poll for new messages from the source cluster
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+
+        // For each record consumed from the source topic, send it to the target topic
+        for (ConsumerRecord<String, String> record : records) {
+          // Prepare a record to send to the target cluster (topic, key, value)
+          ProducerRecord<String, String> producerRecord = new ProducerRecord<>(targetTopic, record.key(), record.value());
+
+          // Send the record to the target cluster
+          producer.send(producerRecord, (metadata, exception) -> {
+            if (exception != null) {
+              System.err.println("Error sending message to target cluster: " + exception.getMessage());
+            } else {
+              System.out.println("Message sent to target topic " + metadata.topic() +
+                      " partition " + metadata.partition() + " offset " + metadata.offset());
+            }
+          });
+
+          // Increment the message count
+          messageCount++;
+
+          // Break the loop if we've sent the max number of messages
+          if (messageCount >= maxMessages) {
+            System.out.println("Reached the limit of " + maxMessages + " messages. Exiting.");
+            break;
+          }
+        }
+        // Flush to ensure all messages are sent
+        producer.flush();
+      }
+    } finally {
+      // Close both the consumer and producer to release resources
+      consumer.close();
+      producer.close();
+    }*/
   }
 }

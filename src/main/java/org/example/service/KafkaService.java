@@ -19,4 +19,6 @@ public interface KafkaService {
 
   void getStatusOfConsumerGroup(String sourceBootstrap);
 
+  void postMessagesTopic();
+
 }
