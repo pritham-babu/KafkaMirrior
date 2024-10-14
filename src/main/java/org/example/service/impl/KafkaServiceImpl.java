@@ -33,6 +33,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.requests.OffsetFetchResponse;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.example.dto.KafkaMirrorDTO;
@@ -60,6 +61,11 @@ import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 
+import javax.management.MBeanServerConnection;
+import javax.management.ObjectName;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
@@ -462,7 +468,7 @@ public class KafkaServiceImpl implements KafkaService {
 
       // Fetch all active consumer groups
       Set<String> consumerGroups = getConsumerGroups(adminClient);
-      System.out.printf("%-40s %-30s %-15s %-15s %-15s %-15s\n", "Consumer Group", "Topic", "Partition", "Latest Offset", "Consumer Offset" , "Lag");
+      System.out.printf("%-40s %-30s %-15s %-15s %-15s %-15s\n", "ConsumerGroup", "Topic", "Partition", "LatestOffset", "ConsumerOffset" , "Lag");
 
       // For each consumer group, get the current offsets and calculate the lag
       for (String consumerGroupId : consumerGroups) {
@@ -626,20 +632,243 @@ public class KafkaServiceImpl implements KafkaService {
       adminClient.close();
     }
   }
+
+  @Override
+  public void postMessagesTopic() {
+
+  }
+
   private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
     DescribeConsumerGroupsResult describeConsumerGroupsResult = adminClient.describeConsumerGroups(Collections.singletonList(groupId));
     return describeConsumerGroupsResult.all().get().get(groupId);
   }
 
 
-  public void postMessagesTopic()
+  public void fetchLaggedMessages()
   {
+
+    String topic = ""; // Change this to your topic
+    String bootstrapServers = ""; // Change this to your bootstrap servers
+    String groupId = ""; // Change this to your consumer group ID
+
+    // Create Kafka Consumer properties
+    Properties props = new Properties();
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false"); // Disable auto commit
+
+    // Create Kafka Consumer
+    KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+
+    // Get partition information for the topic
+    List<TopicPartition> partitions = new ArrayList<>();
+    for (PartitionInfo partition : consumer.partitionsFor(topic)) {
+      partitions.add(new TopicPartition(partition.topic(), partition.partition()));
+    }
+
+    // Create AdminClient for fetching latest offsets
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    AdminClient adminClient = AdminClient.create(adminProps);
+
+    try {
+      // Get the latest offsets for each partition
+      Map<TopicPartition, Long> latestOffsets = getLatestOffsets(adminClient, partitions);
+
+      // Get committed offsets for the consumer group
+      Map<TopicPartition, OffsetAndMetadata> committedOffsets = consumer.committed(new HashSet<>(partitions));
+
+      // Print lag and fetch lagging messages for each partition
+      for (TopicPartition partition : partitions) {
+        long latestOffset = latestOffsets.get(partition);
+        OffsetAndMetadata committedOffsetAndMetadata = committedOffsets.get(partition);
+        long committedOffset = committedOffsetAndMetadata != null ? committedOffsetAndMetadata.offset() : OffsetFetchResponse.INVALID_OFFSET;
+
+        if (committedOffset == OffsetFetchResponse.INVALID_OFFSET) {
+          System.out.printf("Partition: %d has no committed offset. Fetching from offset 0.%n", partition.partition());
+          fetchMessagesFromOffset(consumer, partition, 0, latestOffset);
+        } else {
+          long lag = latestOffset - committedOffset;
+          System.out.printf("Partition: %d Lag: %d messages%n", partition.partition(), lag);
+          if (lag > 0) {
+            fetchMessagesFromOffset(consumer, partition, committedOffset, latestOffset);
+          }
+        }
+      }
+
+    } catch (ExecutionException | InterruptedException e) {
+      e.printStackTrace();
+    } finally {
+      adminClient.close();
+      consumer.close();
+    }
+  }
+
+  private static Map<TopicPartition, Long> getLatestOffsets(AdminClient adminClient, List<TopicPartition> partitions) throws ExecutionException, InterruptedException {
+    Map<TopicPartition, Long> latestOffsets = new HashMap<>();
+
+    for (TopicPartition partition : partitions) {
+      Map<TopicPartition, OffsetSpec> request = Collections.singletonMap(partition, OffsetSpec.latest());
+      ListOffsetsResult result = adminClient.listOffsets(request);
+      ListOffsetsResult.ListOffsetsResultInfo resultInfo = result.partitionResult(partition).get();
+      latestOffsets.put(partition, resultInfo.offset());
+    }
+    return latestOffsets;
+  }
+
+  // Fetch and print messages from a specific offset to the latest offset
+  private static void fetchMessagesFromOffset(KafkaConsumer<String, String> consumer, TopicPartition partition, long startOffset, long endOffset) {
+    // Assign partition and seek to the starting offset
+    consumer.assign(Collections.singletonList(partition));
+    consumer.seek(partition, startOffset);
+
+    System.out.printf("Fetching messages from partition %d from offset %d to %d%n", partition.partition(), startOffset, endOffset);
+
+    // Fetch and print messages
+    boolean continueFetching = true;
+    while (continueFetching) {
+      ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+
+      for (ConsumerRecord<String, String> record : records) {
+        System.out.printf("Partition: %d, Offset: %d, Key: %s, Value: %s%n",
+                record.partition(), record.offset(), record.key(), record.value());
+        if (record.offset() >= endOffset - 1) {
+          continueFetching = false;
+          break;
+        }
+      }
+    }
+  }
+
+
+
+    /*// Kafka AdminClient properties
+    Properties properties = new Properties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+
+    // Create AdminClient instance
+    try (AdminClient adminClient = AdminClient.create(properties)) {
+      // Get consumer group description
+      ConsumerGroupDescription groupDescription = adminClient.describeConsumerGroups(
+                      java.util.Collections.singletonList(groupId))
+              .describedGroups()
+              .get(groupId)
+              .get();
+
+      // Get the list of members in the consumer group
+      Collection<MemberDescription> members = groupDescription.members();
+
+      if (members.isEmpty()) {
+        System.out.println("No members in consumer group: " + groupId);
+      } else {
+        // Print header for the table
+        System.out.printf("%-30s%-20s%-30s%n", "ConsumerMemberID", "Host", "AssignedPartitions");
+        System.out.println("--------------------------------------------------------------------------------------------");
+
+        // For each member, print the partitions assigned to them
+        for (MemberDescription member : members) {
+          // Get partitions assigned to the member for the specific topic
+          StringJoiner joiner = new StringJoiner(", ");
+          for (TopicPartition tp : member.assignment().topicPartitions()) {
+            if (tp.topic().equals(topic)) {
+              String s = String.valueOf(tp.partition());
+              joiner.add(s);
+            }
+          }
+          String partitions = joiner.toString();
+
+          // Print in table format
+          System.out.printf("%-30s%-20s%-30s%n", member.consumerId(), member.host(), partitions.isEmpty() ? "No partitions" : partitions);
+        }
+      }
+    } catch (InterruptedException | ExecutionException e) {
+      e.printStackTrace();
+    }*/
+
+    /*// Kafka Bootstrap server address (your Kafka broker address)
+    String bootstrapServers = ""; // Replace with your Kafka broker IP:port
+    String groupId = "";       // Your consumer group ID
+    String topic = "";                  // The topic you want to consume from
+
+    // Properties configuration for the Kafka Consumer
+    Properties properties = new Properties();
+
+    // Pointing to the Kafka broker
+    properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+
+    // Assign a consumer group ID, consumers in the same group share the load
+    properties.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+
+    // Configure key and value deserializers (e.g., String key-value pairs)
+    properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+
+    // Define the starting offset behavior if no committed offset is found for the consumer
+    properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"); // or "latest" for most recent
+
+    // Enable auto-commit of offsets (you can turn this off and handle offsets manually if needed)
+    properties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
+
+    // Create a Kafka Consumer instance
+    Consumer<String, String> consumer = new KafkaConsumer<>(properties);
+
+    // Subscribe to the specified topic
+    consumer.subscribe(Collections.singletonList(topic));
+
+    // Poll for new records in a loop (simple infinite loop)
+    try {
+      for(int i = 0; i< 20; i++)
+      {
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+
+        if(Objects.nonNull(records))
+        {
+          for (ConsumerRecord<String, String> record : records) {
+            System.out.printf("Consumed record: key = %s, value = %s, partition = %d, offset = %d%n",
+                    record.key(), record.value(), record.partition(), record.offset());
+          }
+        }
+        // Process each record from the topic
+
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    } finally {
+      consumer.close(); // Close the consumer on exit
+    }*/
+
+//    List<String> bootstrapServers = Arrays.asList(""); // example bootstrap servers
+//
+//    for (String server : bootstrapServers) {
+//      String jmxUrl = "service:jmx:rmi:///jndi/rmi://" + server + "/jmxrmi";
+//      try {
+//        JMXServiceURL serviceUrl = new JMXServiceURL(jmxUrl);
+//        JMXConnector jmxConnector = JMXConnectorFactory.connect(serviceUrl, null);
+//        MBeanServerConnection mBeanServerConnection = jmxConnector.getMBeanServerConnection();
+//
+//        // Example: Get Under-replicated Partitions
+//        ObjectName underReplicatedPartitions = new ObjectName("kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions");
+//        Integer underReplicatedCount = (Integer) mBeanServerConnection.getAttribute(underReplicatedPartitions, "Value");
+//        System.out.println("Under-replicated partitions for " + server + ": " + underReplicatedCount);
+//
+//        // You can retrieve more metrics as needed
+//
+//        // Close JMX connection
+//        jmxConnector.close();
+//      } catch (Exception e) {
+//        System.err.println("Failed to connect to " + server + ": " + e.getMessage());
+//      }
+//    }
+
+
     /*// Define source and target Kafka clusters (bootstrap servers)
-    String sourceBootstrapServers = "10.16.0.67:9092,10.16.0.92:9092,10.16.0.71:9092";  // Replace with source Kafka broker
-    String targetBootstrapServers = "10.3.0.124:9092,10.3.0.158:9092,10.3.0.200:9092";  // Replace with target Kafka broker
-    String sourceTopic = "BG_SHIPMENT_INBOUND_QA";                          // Replace with source Kafka topic
-    String targetTopic = "BG_SHIPMENT_INBOUND_LOCAL";                          // Replace with target Kafka topic
-    String consumerGroupId = "BG_SHIPMENT_INBOUND_QAMBESHP12302021-QA54";      // Replace with a unique consumer group ID
+    String sourceBootstrapServers = "";  // Replace with source Kafka broker
+    String targetBootstrapServers = "";  // Replace with target Kafka broker
+    String sourceTopic = "";                          // Replace with source Kafka topic
+    String targetTopic = "";                          // Replace with target Kafka topic
+    String consumerGroupId = "";      // Replace with a unique consumer group ID
 
     // Maximum number of messages to relay
     int maxMessages = 5000;
@@ -704,5 +933,5 @@ public class KafkaServiceImpl implements KafkaService {
       consumer.close();
       producer.close();
     }*/
-  }
+
 }
