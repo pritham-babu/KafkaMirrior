@@ -18,6 +18,7 @@ public interface KafkaService {
   void compare2BootStrap(String sourceBootstrap, String destinationBootstrap);
 
   void getStatusOfConsumerGroup(String sourceBootstrap);
+  void kafkaManualOffsetCommit(String message);
 
   void postMessagesTopic();
 

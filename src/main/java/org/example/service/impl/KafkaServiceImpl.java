@@ -634,6 +634,56 @@ public class KafkaServiceImpl implements KafkaService {
   }
 
   @Override
+  public void kafkaManualOffsetCommit(String message) {
+    String topicName = "";          // The Kafka topic to consume from
+    String bootstrapServers = ""; // The Kafka broker
+    String groupId = "";        // The consumer group id
+    int targetPartition = 0;                       // The partition you want to target
+    long targetOffset = 100L;                      // The offset you want to commit and exit after
+
+    // Step 1: Configure the Consumer
+    Properties props = new Properties();
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringDeserializer");
+    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false"); // Disable auto commit for manual control
+
+    // Create Kafka consumer
+    Consumer<String, String> consumer = new KafkaConsumer<>(props);
+
+    // Step 2: Assign the consumer to the specific partition
+    TopicPartition partition = new TopicPartition(topicName, targetPartition);
+    consumer.assign(Collections.singletonList(partition));
+
+    boolean shouldExit = false;
+
+    // Step 3: Poll records from Kafka
+    try {
+      while (!shouldExit) {
+        ConsumerRecords<String, String> records = consumer.poll(100); // Poll records for 100 ms
+
+        for (ConsumerRecord<String, String> record : records) {
+          System.out.printf("Consumed record with key %s and value %s, partition: %d, offset: %d%n",
+                  record.key(), record.value(), record.partition(), record.offset());
+
+          // Check if the target partition and offset are reached
+          if (record.partition() == targetPartition && record.offset() == targetOffset) {
+            // Step 4: Commit the specific offset for the partition and exit the loop
+            consumer.commitSync(Collections.singletonMap(partition, new OffsetAndMetadata(record.offset() + 1)));
+            System.out.printf("Target offset %d committed for partition %d. Exiting...%n",
+                    record.offset() + 1, partition.partition());
+            shouldExit = true; // Set flag to exit the loop
+            break;
+          }
+        }
+      }
+    } finally {
+      consumer.close(); // Ensure the consumer is closed after finishing
+    }
+  }
+
+  @Override
   public void postMessagesTopic() {
 
   }
@@ -933,5 +983,6 @@ public class KafkaServiceImpl implements KafkaService {
       consumer.close();
       producer.close();
     }*/
+
 
 }
