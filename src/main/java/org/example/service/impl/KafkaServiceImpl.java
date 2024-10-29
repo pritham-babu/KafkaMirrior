@@ -668,6 +668,7 @@ public class KafkaServiceImpl implements KafkaService {
   @Override
   public void postMessagesTopic() {
     //deleteConsumerGroup();
+    listTopicsWithGroups();
   }
 
   private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
@@ -675,6 +676,61 @@ public class KafkaServiceImpl implements KafkaService {
     return describeConsumerGroupsResult.all().get().get(groupId);
   }
 
+
+  public void listTopicsWithGroups()
+  {
+    String bootstrapServers = ""; // Replace with your Kafka bootstrap servers
+
+    // Set up Kafka Admin Client properties
+    Properties props = new Properties();
+    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+
+    // Initialize Kafka Admin Client
+    try (AdminClient adminClient = AdminClient.create(props)) {
+      // Step 1: List all consumer groups
+      ListConsumerGroupsResult listConsumerGroupsResult = adminClient.listConsumerGroups();
+      Collection<ConsumerGroupListing> consumerGroupIds = listConsumerGroupsResult.all().get();
+
+      // Step 2: Create a map to store each topic and its associated consumer groups
+      Map<String, Set<String>> topicToConsumerGroups = new HashMap<>();
+
+      // Step 3: For each consumer group, get the topics it is subscribed to
+      for (ConsumerGroupListing groupId : consumerGroupIds) {
+        DescribeConsumerGroupsResult describeConsumerGroupsResult = adminClient.describeConsumerGroups(Collections.singletonList(groupId.groupId()));
+        Map<String, ConsumerGroupDescription> consumerGroupDescriptions = describeConsumerGroupsResult.all().get();
+
+        for (ConsumerGroupDescription consumerGroupDescription : consumerGroupDescriptions.values()) {
+          // List offsets to get topics for each consumer group
+          ListConsumerGroupOffsetsResult listConsumerGroupOffsetsResult = adminClient.listConsumerGroupOffsets(groupId.groupId());
+          Map<TopicPartition, OffsetAndMetadata> offsets = listConsumerGroupOffsetsResult.partitionsToOffsetAndMetadata().get();
+
+          // Manually add each topic to its consumer groups without computeIfAbsent
+          for (TopicPartition topicPartition : offsets.keySet()) {
+            String topic = topicPartition.topic();
+
+            // Check if the topic is already present in the map
+            Set<String> consumerGroups = topicToConsumerGroups.get(topic);
+            if (consumerGroups == null) {
+              consumerGroups = new HashSet<>();
+              topicToConsumerGroups.put(topic, consumerGroups);
+            }
+            consumerGroups.add(consumerGroupDescription.groupId());
+          }
+        }
+      }
+
+      // Step 4: Print all topics and their associated consumer groups in table format
+      System.out.printf("%-50s %-30s%n", "Topic", "ConsumerGroups");
+      System.out.println("--------------------------------------------------------");
+
+      for (Map.Entry<String, Set<String>> entry : topicToConsumerGroups.entrySet()) {
+        System.out.printf("%-50s %-30s%n", entry.getKey(), entry.getValue());
+      }
+
+    } catch (ExecutionException | InterruptedException e) {
+      e.printStackTrace();
+    }
+  }
 
   public void fetchLaggedMessages()
   {
