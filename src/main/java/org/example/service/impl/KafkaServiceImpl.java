@@ -9,13 +9,12 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
-import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.apache.kafka.clients.admin.DeleteConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
-import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -29,10 +28,8 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.KafkaFuture;
-import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.requests.OffsetFetchResponse;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -45,6 +42,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,22 +51,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.*;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.DescribeTopicsResult;
-import org.apache.kafka.clients.admin.TopicDescription;
-import org.apache.kafka.clients.admin.ConsumerGroupListing;
-import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
-
-import javax.management.MBeanServerConnection;
-import javax.management.ObjectName;
-import javax.management.remote.JMXConnector;
-import javax.management.remote.JMXConnectorFactory;
-import javax.management.remote.JMXServiceURL;
-import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
 
 
 @Service
@@ -685,7 +667,7 @@ public class KafkaServiceImpl implements KafkaService {
 
   @Override
   public void postMessagesTopic() {
-
+    //deleteConsumerGroup();
   }
 
   private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
@@ -753,6 +735,41 @@ public class KafkaServiceImpl implements KafkaService {
     } finally {
       adminClient.close();
       consumer.close();
+    }
+  }
+
+  public static void deleteConsumerGroup()
+  {
+    String bootstrapServers = ""; // Replace with your bootstrap server
+    String topicName = ""; // Replace with your topic name
+    String groupId = ""; // Replace with the consumer group ID you want to delete
+
+    // Create properties for the AdminClient
+    Properties props = new Properties();
+    props.put("bootstrap.servers", bootstrapServers);
+
+    // Create AdminClient
+    try (AdminClient adminClient = AdminClient.create(props)) {
+      // Describe the specified consumer group
+      DescribeConsumerGroupsResult describeResult = adminClient.describeConsumerGroups(Collections.singleton(groupId));
+      Map<String, ConsumerGroupDescription> groupDescriptionMap = describeResult.all().get();
+
+      // Check if the consumer group exists
+      ConsumerGroupDescription groupDescription = groupDescriptionMap.get(groupId);
+      if (groupDescription == null) {
+        System.out.println("Consumer group " + groupId + " does not exist.");
+        return;
+      }
+
+      DeleteConsumerGroupsResult deleteResult = adminClient.deleteConsumerGroups(Collections.singleton(groupId));
+      deleteResult.all().get(); // Wait for deletion to complete
+      System.out.println("Deleted consumer group: " + groupId);
+
+    } catch (ExecutionException e) {
+      System.err.println("Error occurred while deleting consumer group: " + e.getMessage());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      System.err.println("Operation interrupted: " + e.getMessage());
     }
   }
 
