@@ -33,23 +33,39 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.requests.OffsetFetchResponse;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.velocity.VelocityContext;
+import org.apache.velocity.app.Velocity;
 import org.example.dto.KafkaMirrorDTO;
 import org.example.dto.KafkaOffsetAdjust;
 import org.example.dto.TopicData;
 import org.example.service.KafkaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.StringWriter;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 
 
@@ -668,7 +684,9 @@ public class KafkaServiceImpl implements KafkaService {
   @Override
   public void postMessagesTopic() {
     //deleteConsumerGroup();
-    listTopicsWithGroups();
+    //listTopicsWithGroups();
+    //deleteConsumerGroup();
+    //listInActiveConsumerGroup();
   }
 
   private static ConsumerGroupDescription getConsumerGroupDescription(AdminClient adminClient, String groupId) throws ExecutionException, InterruptedException {
@@ -794,11 +812,40 @@ public class KafkaServiceImpl implements KafkaService {
     }
   }
 
+  public static void listInActiveConsumerGroup()
+  {
+    String bootstrapServers = "10.16.0.5:9092,10.16.0.53:9092,10.16.0.93:9092"; // e.g., "localhost:9092"
+
+    Properties props = new Properties();
+    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+
+    try (AdminClient adminClient = AdminClient.create(props)) {
+      // Get list of all consumer groups
+      List<String> inactiveGroups = new ArrayList<>();
+      for (ConsumerGroupListing groupListing : adminClient.listConsumerGroups().all().get()) {
+        String groupId = groupListing.groupId();
+        // Fetch group description
+        ConsumerGroupDescription groupDescription = adminClient.describeConsumerGroups(Arrays.asList(groupId))
+                .all()
+                .get()
+                .get(groupId);
+
+        // Check if group has no active members
+        if (groupDescription.members().isEmpty()) {
+          inactiveGroups.add(groupId);
+        }
+      }
+
+      System.out.println("Inactive Consumer Groups: " + inactiveGroups);
+    } catch (ExecutionException | InterruptedException e) {
+      e.printStackTrace();
+    }
+  }
   public static void deleteConsumerGroup()
   {
-    String bootstrapServers = ""; // Replace with your bootstrap server
-    String topicName = ""; // Replace with your topic name
-    String groupId = ""; // Replace with the consumer group ID you want to delete
+    String bootstrapServers = "10.3.0.124:9092,10.3.0.158:9092,10.3.0.200:9092"; // Replace with your bootstrap server
+    String topicName = "BG_EVENT_UAT"; // Replace with your topic name
+    String groupId = "APSS_1"; // Replace with the consumer group ID you want to delete
 
     // Create properties for the AdminClient
     Properties props = new Properties();
@@ -1056,6 +1103,128 @@ public class KafkaServiceImpl implements KafkaService {
       consumer.close();
       producer.close();
     }*/
+
+
+  public void test() throws Exception {
+
+    Velocity.init();
+
+    // Load JSON file
+    ObjectMapper objectMapper = new ObjectMapper();
+    Map<String, Object> jsonData = objectMapper.readValue(new File("ediCodes.json"), Map.class);
+
+    // Create Velocity context and populate it with JSON data
+    VelocityContext context = new VelocityContext(jsonData);
+
+    // Load Velocity template
+    String templateFile = "ediCodeTemplate.vm";
+    StringWriter writer = new StringWriter();
+    Velocity.mergeTemplate(templateFile, "UTF-8", context, writer);
+
+    // Write the generated file
+    try (FileWriter fileWriter = new FileWriter("EdiCode.java")) {
+      fileWriter.write(writer.toString());
+    }
+
+    System.out.println("EdiCode.java generated successfully!");
+
+
+
+    String ediMessage = "ISA*00*          *00*          *ZZ*1234567890    *ZZ*9876543210    *050101*0900*U*00401*000000123*0*P*>~\n" +
+            "GS*PO*1234567890*9876543210*050101*0900*123*X*004010~\n" +
+            "ST*850*000000001~\n" +
+            "BEG*00*NE*12345**20050101~\n" +
+            "REF*DP*56789~\n" +
+            "DTM*003*20050101~\n" +
+            "N1*ST*123 Main St*ZZ*987654321~\n" +
+            "SE*6*000000001~\n" +
+            "GE*1*123~\n" +
+            "IEA*1*000000123~";
+    // Step 1: Parse the EDI message into segments and fields
+    List<String> segments = parseEDI(ediMessage);
+
+    // Step 2: Analyze segments to identify their structure
+    Map<String, List<String>> segmentMap = analyzeSegments(segments);
+
+    // Step 3: Generate the DFDL schema
+    String dfdlSchema = generateDFDLSchema(segmentMap);
+
+    // Step 4: Output the DFDL schema
+    System.out.println(dfdlSchema);
+  }
+
+  // Step 1: Parse the EDI message
+  public static List<String> parseEDI(String ediMessage) {
+    // Split the EDI message by the segment separator "~"
+    String[] segments = ediMessage.split("~");
+    return Arrays.asList(segments);
+  }
+
+  // Step 2: Analyze the segments (structure, fields, and delimiters)
+  public static Map<String, List<String>> analyzeSegments(List<String> segments) {
+    Map<String, List<String>> segmentMap = new LinkedHashMap<>();
+
+    for (String segment : segments) {
+      // Split the segment into fields using the field separator "*"
+      String[] fields = segment.split("\\*");
+
+      // Use the first element as the segment name (e.g., ISA, GS, BEG)
+      segmentMap.put(fields[0], Arrays.asList(fields));
+    }
+
+    return segmentMap;
+  }
+
+  // Step 3: Generate DFDL schema from the segment map
+  public static String generateDFDLSchema(Map<String, List<String>> segmentMap) {
+    StringBuilder dfdlSchema = new StringBuilder();
+    dfdlSchema.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+            .append("<dfdl:format xmlns:dfdl=\"http://www.w3.org/2001/XMLSchema-instance\"\n")
+            .append("             xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n")
+            .append("             xsi:schemaLocation=\"http://www.w3.org/2001/XMLSchema-instance http://www.w3.org/2001/XMLSchema-instance.xsd\">\n")
+            .append("  <dfdl:record name=\"EDI850\">\n");
+
+    // Iterate over each segment and create corresponding DFDL elements
+    for (Map.Entry<String, List<String>> entry : segmentMap.entrySet()) {
+      String segmentName = entry.getKey();
+      List<String> fields = entry.getValue();
+
+      // Handle different types of fields (optional, fixed-length, repeated, etc.)
+      for (int i = 1; i < fields.size(); i++) { // Skip the first element (segment identifier)
+        String fieldName = segmentName + i;
+        String fieldValue = fields.get(i);
+
+        // Decide the length and type based on the field content
+        int fieldLength = fieldValue.length();
+        String fieldType = "dfdl:string"; // Default type for all fields
+        if (fieldValue.matches("\\d+")) {
+          fieldType = "dfdl:int";  // Integer type for numeric fields
+        } else if (fieldValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+          fieldType = "dfdl:date"; // Date type for fields that match date format
+        }
+
+        // Handling optional fields
+        String occursCountKind = "dfdl:occursCountKind=\"bounded\"";
+        String occursCount = "1";
+        if (i % 2 == 0) { // Assume even-indexed fields are optional for demonstration
+          occursCount = "0"; // Optional field
+        }
+
+        // Add DFDL element for the field with its length, type, and other attributes
+        dfdlSchema.append("    <dfdl:element name=\"" + fieldName + "\" length=\"" + fieldLength + "\" type=\"" + fieldType + "\" " +
+                occursCountKind + " occursCount=\"" + occursCount + "\"/>\n");
+      }
+    }
+
+    // Closing tags for the DFDL schema
+    dfdlSchema.append("  </dfdl:record>\n")
+            .append("</dfdl:format>\n");
+
+    return dfdlSchema.toString();
+  }
+
+
+
 
 
 }

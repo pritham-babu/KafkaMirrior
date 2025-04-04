@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.io.Serializable;
+import java.util.List;
 
 @Getter
 @Setter
@@ -22,4 +23,5 @@ public class KafkaMirrorDTO implements Serializable {
     private long sourceOffset;
     private int destinationPartition;
     private long resetOffset;
+    private List<String> finaltest;
 }

@@ -22,4 +22,6 @@ public interface KafkaService {
 
   void postMessagesTopic();
 
+  void test() throws Exception;
+
 }

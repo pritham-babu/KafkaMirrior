@@ -17,6 +17,7 @@ dependencies {
     implementation 'org.projectlombok:lombok:1.18.18'
     annotationProcessor 'org.projectlombok:lombok:1.18.12'
     implementation group: 'org.apache.commons', name: 'commons-collections4', version: '4.5.0-M2'
+    implementation 'org.apache.velocity:velocity-engine-core:2.3'
     implementation group: 'org.apache.kafka', name: 'kafka-clients', version: '3.8.0'
     implementation group: 'io.swagger', name: 'swagger-annotations', version: '1.5.0'
     implementation 'org.springframework.boot:spring-boot-starter-web'
@@ -25,8 +26,17 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     implementation group: 'dev.mccue', name: 'guava', version: '33.2.0'
+    implementation 'redis.clients:jedis:4.3.1'
     implementation 'io.springfox:springfox-swagger2:2.9.2'
     implementation 'io.springfox:springfox-swagger-ui:2.9.2'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.module:jackson-module-parameter-names'
+
+    // Swagger UI (SpringDoc)
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 

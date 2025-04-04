@@ -5,15 +5,20 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
 import lombok.extern.slf4j.Slf4j;
+import org.example.service.AnalysisResult;
 import org.example.service.KafkaService;
+import org.example.service.impl.SourceAnalyzerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 import static org.springframework.http.HttpStatus.OK;
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
@@ -27,6 +32,9 @@ public class KafkaMirriorController {
 
     @Autowired
     KafkaService kafkaService;
+
+    @Autowired
+    SourceAnalyzerService analyzerService;
     @PostMapping(value = "kafkaMessageCopierWithOffset",
             produces = APPLICATION_JSON_VALUE)
     @ApiOperation(value = "Kafka Message Copier with Offset", produces = "application/json",
@@ -39,6 +47,14 @@ public class KafkaMirriorController {
     {
         kafkaService.kafkaMessageCopierWithOffset(payload);
     }
+
+
+
+    @GetMapping
+    public List<AnalysisResult> analyze(@RequestParam String sourcePath) {
+        return analyzerService.analyzeSource(sourcePath);
+    }
+
 
     @PostMapping(value = "kafkaOffsetsAndPartitionFetcher",
             produces = APPLICATION_JSON_VALUE)
@@ -127,9 +143,9 @@ public class KafkaMirriorController {
             @ApiResponse(code = 500, message = "The Post call Failed"),
             @ApiResponse(code = 404, message = "The API could not be found"),
             @ApiResponse(code = 400, message = "Invalid input")})
-    public void postMessagesTopic()
+    public void postMessagesTopic() throws Exception
     {
-        kafkaService.postMessagesTopic();
+        kafkaService.test();
     }
 
     @PostMapping(value = "kafkaManualOffsetCommit",
